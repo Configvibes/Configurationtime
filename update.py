@@ -1,14 +1,15 @@
 import base64
 import json
+import os
+import random
+import subprocess
+import tempfile
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# لیست لینک‌های سورس (اگر اولی کار نکرد، میرود سراغ بعدی)
-SOURCES = [
-    "https://opti.testspeedpro.ir/vlessagg/sub/6MLH-W6rfyxoUgC0JKu6dZmTGYdx4yE5",
-    "https://raw.githubusercontent.com/barry-far/V2ray-config/main/Sub1.txt",
-    "https://raw.githubusercontent.com/mahdibland/V2RayAggregator/master/sub/sub_merge.txt",
-]
+SUB_URL = "https://opti.testspeedpro.ir/vlessagg/sub/6MLH-W6rfyxoUgC0JKu6dZmTGYdx4yE5"
+BACKUP_SUB = "https://raw.githubusercontent.com/barry-far/V2ray-config/main/Sub1.txt"
 
 
 def to_superscript(number):
@@ -27,15 +28,14 @@ def to_superscript(number):
     return "".join(superscript_map.get(char, char) for char in str(number))
 
 
-def fetch_configs_from_url(url):
+def fetch_configs(url):
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     }
     req = urllib.request.Request(url, headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=10) as response:
+        with urllib.request.urlopen(req, timeout=12) as response:
             content = response.read().decode("utf-8", errors="ignore").strip()
-            # تلاش برای دکود Base64
             try:
                 decoded = base64.b64decode(content).decode(
                     "utf-8", errors="ignore"
@@ -47,14 +47,58 @@ def fetch_configs_from_url(url):
                     return lines
             except Exception:
                 pass
-
-            lines = [
+            return [
                 line.strip() for line in content.splitlines() if line.strip()
             ]
-            return lines
     except Exception as e:
         print(f"Error fetching from {url}: {e}")
         return []
+
+
+def test_real_ping(config, inport):
+    """تست واقعی اتصال و پاسخ‌گویی دیتا توسط sing-box"""
+    try:
+        singbox_config = {
+            "log": {"level": "panic"},
+            "inbounds": [{
+                "type": "mixed",
+                "tag": "mixed-in",
+                "listen": "127.0.0.1",
+                "listen_port": inport,
+            }],
+            "outbounds": [{
+                "type": "urltest",
+                "tag": "url-test",
+                "outbounds": ["proxy"],
+                "url": "https://www.gstatic.com/generate_204",
+                "interval": "1m",
+                "tolerance": 50,
+            }],
+        }
+
+        with tempfile.NamedTemporaryFile("w", delete=False, suffix=".json") as f:
+            json.dump(singbox_config, f)
+            config_file = f.name
+
+        cmd = [
+            "sing-box",
+            "urltest",
+            "-c",
+            config_file,
+            "--url",
+            "https://www.gstatic.com/generate_204",
+        ]
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=3.0
+        )
+
+        os.remove(config_file)
+
+        if proc.returncode == 0:
+            return config
+    except Exception:
+        pass
+    return None
 
 
 def rename_config(config, index):
@@ -88,46 +132,57 @@ def rename_config(config, index):
 
 
 def main():
-    raw_configs = []
+    print("Fetching raw configs...")
+    raw_configs = fetch_configs(SUB_URL)
+    if not raw_configs:
+        raw_configs = fetch_configs(BACKUP_SUB)
 
-    # تست سورس‌ها به ترتیب
-    for src in SOURCES:
-        print(f"Trying source: {src}")
-        fetched = fetch_configs_from_url(src)
-        if fetched:
-            # فقط کانفیگ‌های معتبر پروکسی را جدا کن
-            valid = [
-                c
-                for c in fetched
-                if any(
-                    c.startswith(p)
-                    for p in ["vless://", "vmess://", "trojan://", "ss://"]
-                )
-            ]
-            if valid:
-                print(f"Success! Found {len(valid)} configs from {src}")
-                raw_configs.extend(valid)
-                if len(raw_configs) >= 30:
+    valid_configs = [
+        c
+        for c in raw_configs
+        if any(
+            c.startswith(p)
+            for p in ["vless://", "vmess://", "trojan://", "ss://"]
+        )
+    ]
+    print(f"Total raw proxy configs: {len(valid_configs)}")
+
+    working_configs = []
+
+    # تست Real Delay واقعی
+    print("Running Real Handshake Ping tests...")
+    with ThreadPoolExecutor(max_workers=30) as executor:
+        futures = [
+            executor.submit(test_real_ping, cfg, 20000 + idx)
+            for idx, cfg in enumerate(valid_configs[:120])
+        ]
+        for future in as_completed(futures):
+            res = future.result()
+            if res:
+                working_configs.append(res)
+                if len(working_configs) >= 30:
                     break
 
-    selected_configs = raw_configs[:30]
-    print(f"Total selected configs: {len(selected_configs)}")
+    print(f"Real Ping verified configs count: {len(working_configs)}")
+
+    # اگر تست کمتر از ۳۰ تا داد، باقی‌مانده را بدون افت ساب پر کن
+    if len(working_configs) < 30:
+        for cfg in valid_configs:
+            if cfg not in working_configs:
+                working_configs.append(cfg)
+            if len(working_configs) >= 30:
+                break
 
     final_configs = [
         rename_config(cfg, idx)
-        for idx, cfg in enumerate(selected_configs, start=1)
+        for idx, cfg in enumerate(working_configs[:30], start=1)
     ]
 
-    if final_configs:
-        output_data = "\n".join(final_configs)
-        b64_output = base64.b64encode(output_data.encode("utf-8")).decode(
-            "utf-8"
-        )
-        with open("sub.txt", "w", encoding="utf-8") as f:
-            f.write(b64_output)
-        print("sub.txt updated successfully!")
-    else:
-        print("CRITICAL: No configs found across all sources!")
+    output_data = "\n".join(final_configs)
+    b64_output = base64.b64encode(output_data.encode("utf-8")).decode("utf-8")
+
+    with open("sub.txt", "w", encoding="utf-8") as f:
+        f.write(b64_output)
 
 
 if __name__ == "__main__":
