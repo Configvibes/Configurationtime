@@ -1,11 +1,12 @@
 import base64
 import json
-import socket
 import urllib.parse
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
-SUB_URL = "https://opti.testspeedpro.ir/vlessagg/sub/6MLH-W6rfyxoUgC0JKu6dZmTGYdx4yE5"
+# سورس اصلی
+PRIMARY_SUB = "https://opti.testspeedpro.ir/vlessagg/sub/6MLH-W6rfyxoUgC0JKu6dZmTGYdx4yE5"
+# سورس پشتیبان (جهت جلوگیری از صفر شدن فایل)
+BACKUP_SUB = "https://raw.githubusercontent.com/barry-far/V2ray-config/main/Sub1.txt"
 
 
 def to_superscript(number):
@@ -25,17 +26,17 @@ def to_superscript(number):
 
 
 def fetch_configs(url):
-    req = urllib.request.Request(
-        url,
-        headers={
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        },
-    )
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    }
+    req = urllib.request.Request(url, headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=15) as response:
-            content = response.read().decode("utf-8").strip()
+        with urllib.request.urlopen(req, timeout=12) as response:
+            content = response.read().decode("utf-8", errors="ignore").strip()
             try:
-                decoded = base64.b64decode(content).decode("utf-8")
+                decoded = base64.b64decode(content).decode(
+                    "utf-8", errors="ignore"
+                )
                 lines = [
                     line.strip() for line in decoded.splitlines() if line.strip()
                 ]
@@ -47,68 +48,8 @@ def fetch_configs(url):
                 line.strip() for line in content.splitlines() if line.strip()
             ]
     except Exception as e:
-        print(f"Error fetching sub: {e}")
+        print(f"Error fetching from {url}: {e}")
         return []
-
-
-def parse_host_port(config):
-    try:
-        if "://" not in config:
-            return None, None
-
-        proto, rest = config.split("://", 1)
-
-        if proto in ["vless", "trojan"]:
-            main_part = rest.split("#")[0].split("?")[0]
-            if "@" in main_part:
-                host_port = main_part.split("@")[1]
-            else:
-                host_port = main_part
-
-            if "]" in host_port:
-                host = host_port.split("]")[0] + "]"
-                port = int(host_port.split("]:")[1].split("/")[0])
-            else:
-                host, port = host_port.split(":")
-                port = int(port.split("/")[0])
-            return host, port
-
-        elif proto == "ss":
-            main_part = rest.split("#")[0].split("?")[0].split("/")[0]
-            if "@" in main_part:
-                host_port = main_part.split("@")[1]
-                host, port = host_port.split(":")
-                return host, int(port)
-
-        elif proto == "vmess":
-            b64_str = rest.split("#")[0]
-            missing_padding = len(b64_str) % 4
-            if missing_padding:
-                b64_str += "=" * (4 - missing_padding)
-            decoded = base64.b64decode(b64_str).decode("utf-8")
-            data = json.loads(decoded)
-            return data.get("add"), int(data.get("port", 443))
-
-    except Exception:
-        pass
-    return None, None
-
-
-def quick_check(config):
-    """تست سریع بدون فیلتر کردن زودهنگام کانفیگ‌های CDN"""
-    host, port = parse_host_port(config)
-    if not host or not port:
-        return config
-
-    try:
-        clean_host = host.replace("[", "").replace("]", "")
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(2.0)
-        s.connect((clean_host, int(port)))
-        s.close()
-        return config
-    except Exception:
-        return None
 
 
 def rename_config(config, index):
@@ -122,7 +63,9 @@ def rename_config(config, index):
             missing_padding = len(b64_str) % 4
             if missing_padding:
                 b64_str += "=" * (4 - missing_padding)
-            decoded = base64.b64decode(b64_str).decode("utf-8")
+            decoded = base64.b64decode(b64_str).decode(
+                "utf-8", errors="ignore"
+            )
             data = json.loads(decoded)
             data["ps"] = new_name
             new_b64 = base64.b64encode(
@@ -140,41 +83,40 @@ def rename_config(config, index):
 
 
 def main():
-    print("Fetching raw configs...")
-    raw_configs = fetch_configs(SUB_URL)
-    print(f"Total fetched from source: {len(raw_configs)}")
+    print("Fetching from primary source...")
+    raw_configs = fetch_configs(PRIMARY_SUB)
 
-    working_configs = []
+    if not raw_configs:
+        print("Primary source failed. Fetching from backup source...")
+        raw_configs = fetch_configs(BACKUP_SUB)
 
-    if raw_configs:
-        with ThreadPoolExecutor(max_workers=50) as executor:
-            futures = [executor.submit(quick_check, cfg) for cfg in raw_configs]
-            for future in as_completed(futures):
-                res = future.result()
-                if res and res not in working_configs:
-                    working_configs.append(res)
-                    if len(working_configs) >= 30:
-                        break
+    valid_configs = [
+        cfg
+        for cfg in raw_configs
+        if any(
+            cfg.startswith(p)
+            for p in ["vless://", "vmess://", "trojan://", "ss://"]
+        )
+    ]
 
-        # پشتیبان: اگر پینگ گیت‌هاب بستگی داشت، از کانفیگ‌های خام سورس استفاده کن تا لینک خالی نماند
-        if len(working_configs) < 30:
-            for cfg in raw_configs:
-                if cfg not in working_configs:
-                    working_configs.append(cfg)
-                if len(working_configs) >= 30:
-                    break
+    print(f"Total valid configs found: {len(valid_configs)}")
 
-    print(f"Final selected configs: {len(working_configs)}")
+    selected_configs = valid_configs[:30]
+    final_configs = [
+        rename_config(cfg, idx)
+        for idx, cfg in enumerate(selected_configs, start=1)
+    ]
 
-    final_configs = []
-    for idx, cfg in enumerate(working_configs[:30], start=1):
-        final_configs.append(rename_config(cfg, idx))
-
-    output_data = "\n".join(final_configs)
-    b64_output = base64.b64encode(output_data.encode("utf-8")).decode("utf-8")
-
-    with open("sub.txt", "w", encoding="utf-8") as f:
-        f.write(b64_output)
+    if final_configs:
+        output_data = "\n".join(final_configs)
+        b64_output = base64.b64encode(output_data.encode("utf-8")).decode(
+            "utf-8"
+        )
+        with open("sub.txt", "w", encoding="utf-8") as f:
+            f.write(b64_output)
+        print("Updated sub.txt with 30 configs.")
+    else:
+        print("No configs available!")
 
 
 if __name__ == "__main__":
