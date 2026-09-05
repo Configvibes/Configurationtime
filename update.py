@@ -3,14 +3,7 @@ import json
 import urllib.parse
 import urllib.request
 
-# سورس اصلی
-PRIMARY_SUB = "https://opti.testspeedpro.ir/vlessagg/sub/6MLH-W6rfyxoUgC0JKu6dZmTGYdx4yE5"
-
-# سورس‌های کمکی برای پر کردن تا سقف ۲۰۰ کانفیگ
-BACKUP_SUBS = [
-    "https://raw.githubusercontent.com/barry-far/V2ray-config/main/Sub1.txt",
-    "https://raw.githubusercontent.com/mahdibland/V2RayAggregator/master/sub/sub_merge.txt",
-]
+SUB_URL = "https://opti.testspeedpro.ir/vlessagg/sub/6MLH-W6rfyxoUgC0JKu6dZmTGYdx4yE5"
 
 
 def to_superscript(number):
@@ -29,32 +22,48 @@ def to_superscript(number):
     return "".join(superscript_map.get(char, char) for char in str(number))
 
 
-def fetch_configs(url):
+def decode_base64_recursively(data_str):
+    """دکود کردن لایه‌ای base64 برای استخراج کانفیگ‌های مخفی"""
+    data_str = data_str.strip()
+    for _ in range(3):
+        try:
+            missing_padding = len(data_str) % 4
+            if missing_padding:
+                data_str += "=" * (4 - missing_padding)
+            decoded = base64.b64decode(data_str).decode(
+                "utf-8", errors="ignore"
+            )
+            if any(
+                proto in decoded
+                for proto in ["vless://", "vmess://", "trojan://", "ss://"]
+            ):
+                data_str = decoded
+            else:
+                break
+        except Exception:
+            break
+    return data_str
+
+
+def fetch_raw_sub(url):
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
     req = urllib.request.Request(url, headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=12) as response:
-            content = response.read().decode("utf-8", errors="ignore").strip()
-
-            try:
-                decoded = base64.b64decode(content).decode(
-                    "utf-8", errors="ignore"
-                )
-                lines = [
-                    line.strip() for line in decoded.splitlines() if line.strip()
-                ]
-                if lines:
-                    return lines
-            except Exception:
-                pass
-
-            return [
-                line.strip() for line in content.splitlines() if line.strip()
+        with urllib.request.urlopen(req, timeout=15) as response:
+            raw_data = (
+                response.read().decode("utf-8", errors="ignore").strip()
+            )
+            decoded_data = decode_base64_recursively(raw_data)
+            lines = [
+                line.strip()
+                for line in decoded_data.splitlines()
+                if line.strip()
             ]
+            return lines
     except Exception as e:
-        print(f"Error fetching source {url}: {e}")
+        print(f"Error fetching source: {e}")
         return []
 
 
@@ -63,6 +72,7 @@ def rename_config(config, index):
     new_name = f"@Configvibes{num_str}🐬"
     encoded_name = urllib.parse.quote(new_name)
 
+    # تغییر اسم در vmess
     if config.startswith("vmess://"):
         try:
             b64_str = config[8:].split("#")[0]
@@ -81,6 +91,7 @@ def rename_config(config, index):
         except Exception:
             return config
 
+    # تغییر اسم در vless / trojan / ss / hy2
     if "#" in config:
         base_url = config.split("#")[0]
         return f"{base_url}#{encoded_name}"
@@ -89,15 +100,15 @@ def rename_config(config, index):
 
 
 def main():
-    print("Fetching primary configs...")
-    raw_configs = fetch_configs(PRIMARY_SUB)
+    print("Fetching exact source configs...")
+    lines = fetch_raw_sub(SUB_URL)
 
-    valid_configs = [
-        cfg
-        for cfg in raw_configs
+    # استخراج دقیق تمام کانفیگ‌های سورس شما
+    extracted_configs = []
+    for line in lines:
         if any(
-            cfg.startswith(p)
-            for p in [
+            line.startswith(proto)
+            for proto in [
                 "vless://",
                 "vmess://",
                 "trojan://",
@@ -106,46 +117,17 @@ def main():
                 "hy2://",
                 "tuic://",
             ]
-        )
-    ]
+        ):
+            extracted_configs.append(line)
 
-    print(f"Primary configs count: {len(valid_configs)}")
+    print(
+        f"Total actual configs extracted from YektaCloud sub: {len(extracted_configs)}"
+    )
 
-    # اگر از ۲۰۰ تا کمتر بود، از سورس‌های کمکی بقیه را پر کن
-    if len(valid_configs) < 200:
-        print("Filling up to 200 configs using backup sources...")
-        for backup_url in BACKUP_SUBS:
-            backup_raw = fetch_configs(backup_url)
-            backup_valid = [
-                cfg
-                for cfg in backup_raw
-                if any(
-                    cfg.startswith(p)
-                    for p in [
-                        "vless://",
-                        "vmess://",
-                        "trojan://",
-                        "ss://",
-                        "hysteria2://",
-                        "hy2://",
-                        "tuic://",
-                    ]
-                )
-            ]
-            for cfg in backup_valid:
-                if cfg not in valid_configs:
-                    valid_configs.append(cfg)
-                if len(valid_configs) >= 200:
-                    break
-            if len(valid_configs) >= 200:
-                break
-
-    selected_configs = valid_configs[:200]
-    print(f"Total final configs: {len(selected_configs)}")
-
+    # تغییر اسم تمام کانفیگ‌ها به @Configvibes
     final_configs = [
         rename_config(cfg, idx)
-        for idx, cfg in enumerate(selected_configs, start=1)
+        for idx, cfg in enumerate(extracted_configs, start=1)
     ]
 
     if final_configs:
@@ -156,8 +138,10 @@ def main():
         with open("sub.txt", "w", encoding="utf-8") as f:
             f.write(b64_output)
         print(
-            f"Successfully updated sub.txt with {len(final_configs)} configs!"
+            f"Successfully saved all {len(final_configs)} configs to sub.txt!"
         )
+    else:
+        print("ERROR: Could not extract configs from source!")
 
 
 if __name__ == "__main__":
