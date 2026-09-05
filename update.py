@@ -1,15 +1,9 @@
 import base64
 import json
-import os
-import random
-import subprocess
-import tempfile
 import urllib.parse
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 SUB_URL = "https://opti.testspeedpro.ir/vlessagg/sub/6MLH-W6rfyxoUgC0JKu6dZmTGYdx4yE5"
-BACKUP_SUB = "https://raw.githubusercontent.com/barry-far/V2ray-config/main/Sub1.txt"
 
 
 def to_superscript(number):
@@ -30,12 +24,14 @@ def to_superscript(number):
 
 def fetch_configs(url):
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
     req = urllib.request.Request(url, headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=12) as response:
+        with urllib.request.urlopen(req, timeout=15) as response:
             content = response.read().decode("utf-8", errors="ignore").strip()
+
+            # تلاش برای دکود Base64
             try:
                 decoded = base64.b64decode(content).decode(
                     "utf-8", errors="ignore"
@@ -47,58 +43,14 @@ def fetch_configs(url):
                     return lines
             except Exception:
                 pass
+
+            # اگر متن ساده بود
             return [
                 line.strip() for line in content.splitlines() if line.strip()
             ]
     except Exception as e:
-        print(f"Error fetching from {url}: {e}")
+        print(f"Error fetching source: {e}")
         return []
-
-
-def test_real_ping(config, inport):
-    """تست واقعی اتصال و پاسخ‌گویی دیتا توسط sing-box"""
-    try:
-        singbox_config = {
-            "log": {"level": "panic"},
-            "inbounds": [{
-                "type": "mixed",
-                "tag": "mixed-in",
-                "listen": "127.0.0.1",
-                "listen_port": inport,
-            }],
-            "outbounds": [{
-                "type": "urltest",
-                "tag": "url-test",
-                "outbounds": ["proxy"],
-                "url": "https://www.gstatic.com/generate_204",
-                "interval": "1m",
-                "tolerance": 50,
-            }],
-        }
-
-        with tempfile.NamedTemporaryFile("w", delete=False, suffix=".json") as f:
-            json.dump(singbox_config, f)
-            config_file = f.name
-
-        cmd = [
-            "sing-box",
-            "urltest",
-            "-c",
-            config_file,
-            "--url",
-            "https://www.gstatic.com/generate_204",
-        ]
-        proc = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=3.0
-        )
-
-        os.remove(config_file)
-
-        if proc.returncode == 0:
-            return config
-    except Exception:
-        pass
-    return None
 
 
 def rename_config(config, index):
@@ -132,57 +84,37 @@ def rename_config(config, index):
 
 
 def main():
-    print("Fetching raw configs...")
+    print("Fetching ALL configs from source...")
     raw_configs = fetch_configs(SUB_URL)
-    if not raw_configs:
-        raw_configs = fetch_configs(BACKUP_SUB)
+    print(f"Total fetched lines: {len(raw_configs)}")
 
+    # دریافت تمام کانفیگ‌های معتبر پروکسی بدون هیچ فیلتر پینگی
     valid_configs = [
-        c
-        for c in raw_configs
+        cfg
+        for cfg in raw_configs
         if any(
-            c.startswith(p)
-            for p in ["vless://", "vmess://", "trojan://", "ss://"]
+            cfg.startswith(p)
+            for p in ["vless://", "vmess://", "trojan://", "ss://", "hysteria2://", "hy2://", "tuic://"]
         )
     ]
-    print(f"Total raw proxy configs: {len(valid_configs)}")
 
-    working_configs = []
-
-    # تست Real Delay واقعی
-    print("Running Real Handshake Ping tests...")
-    with ThreadPoolExecutor(max_workers=30) as executor:
-        futures = [
-            executor.submit(test_real_ping, cfg, 20000 + idx)
-            for idx, cfg in enumerate(valid_configs[:120])
-        ]
-        for future in as_completed(futures):
-            res = future.result()
-            if res:
-                working_configs.append(res)
-                if len(working_configs) >= 30:
-                    break
-
-    print(f"Real Ping verified configs count: {len(working_configs)}")
-
-    # اگر تست کمتر از ۳۰ تا داد، باقی‌مانده را بدون افت ساب پر کن
-    if len(working_configs) < 30:
-        for cfg in valid_configs:
-            if cfg not in working_configs:
-                working_configs.append(cfg)
-            if len(working_configs) >= 30:
-                break
+    print(f"Total valid proxy configs found: {len(valid_configs)}")
 
     final_configs = [
         rename_config(cfg, idx)
-        for idx, cfg in enumerate(working_configs[:30], start=1)
+        for idx, cfg in enumerate(valid_configs, start=1)
     ]
 
-    output_data = "\n".join(final_configs)
-    b64_output = base64.b64encode(output_data.encode("utf-8")).decode("utf-8")
-
-    with open("sub.txt", "w", encoding="utf-8") as f:
-        f.write(b64_output)
+    if final_configs:
+        output_data = "\n".join(final_configs)
+        b64_output = base64.b64encode(output_data.encode("utf-8")).decode(
+            "utf-8"
+        )
+        with open("sub.txt", "w", encoding="utf-8") as f:
+            f.write(b64_output)
+        print(f"Successfully saved {len(final_configs)} configs to sub.txt!")
+    else:
+        print("WARNING: Source returned 0 configs!")
 
 
 if __name__ == "__main__":
