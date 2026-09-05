@@ -2,7 +2,7 @@ name: Update Subscription
 
 on:
   schedule:
-    - cron: '0 */6 * * *'
+    - cron: '0 */4 * * *'
   workflow_dispatch:
 
 jobs:
@@ -35,4 +35,4 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add sub.txt
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update subscription with real ping" && git push)
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update with real ping test" && git push)
