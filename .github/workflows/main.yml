@@ -1,77 +1,31 @@
-name: Update Config Vibes Sub
+name: Update Subscription
 
 on:
   schedule:
-    - cron: '0 */6 * * *'
+    - cron: '*/30 * * * *'
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 jobs:
-  build:
+  update:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Repo
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.x'
+          python-version: '3.11'
 
-      - name: Run Aggregator Script
+      - name: Run update script
+        run: python update.py
+
+      - name: Commit & Push
         run: |
-          python -c "
-          import urllib.request
-          import urllib.parse
-          import base64
-
-          url = 'https://raw.githubusercontent.com/ebrasha/free-v2ray-public-list/refs/heads/main/vless_configs.txt'
-          req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-          
-          try:
-              with urllib.request.urlopen(req) as response:
-                  content = response.read().decode('utf-8')
-              
-              lines = content.splitlines()
-              valid_configs = []
-              
-              for line in lines:
-                  line = line.strip()
-                  if line.startswith(('vless://', 'vmess://', 'trojan://', 'ss://')):
-                      if '#' in line:
-                          parts = line.split('#', 1)
-                          orig_name = urllib.parse.unquote(parts[1])
-                          new_name = f'{orig_name} | Config Vibes'
-                          line = f'{parts[0]}#{urllib.parse.quote(new_name)}'
-                      else:
-                          line = f'{line}#Config%20Vibes'
-                      
-                      valid_configs.append(line)
-                      if len(valid_configs) >= 100:
-                          break
-                          
-              info_header = [
-                  'vless://00000000-0000-0000-0000-000000000000@1.1.1.1:443?type=tcp#📢%20Channel%20%7C%20%40ConfigVibes',
-                  'vless://00000000-0000-0000-0000-000000000000@1.1.1.1:443?type=tcp#⚡%20Config%20Vibes%20Sub'
-              ]
-              
-              final_list = info_header + valid_configs
-              plain_output = '\n'.join(final_list)
-              base64_output = base64.b64encode(plain_output.encode('utf-8')).decode('utf-8')
-              
-              with open('sub.txt', 'w', encoding='utf-8') as f:
-                  f.write(base64_output)
-                  
-          except Exception as e:
-              print('Error:', e)
-          "
-
-      - name: Commit and Push Changes
-        run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
           git add sub.txt
-          git commit -m "Auto update sub.txt [skip ci]" || exit 0
-          git push
+          git diff --quiet && git diff --staged --quiet || (
+            git commit -m "Update @Configvibes sub $(date -u +'%Y-%m-%d %H:%M')" &&
+            git push
+          )
