@@ -3,10 +3,12 @@ import json
 import urllib.parse
 import urllib.request
 
-# سورس اصلی
-PRIMARY_SUB = "https://opti.testspeedpro.ir/vlessagg/sub/6MLH-W6rfyxoUgC0JKu6dZmTGYdx4yE5"
-# سورس پشتیبان (جهت جلوگیری از صفر شدن فایل)
-BACKUP_SUB = "https://raw.githubusercontent.com/barry-far/V2ray-config/main/Sub1.txt"
+# لیست لینک‌های سورس (اگر اولی کار نکرد، میرود سراغ بعدی)
+SOURCES = [
+    "https://opti.testspeedpro.ir/vlessagg/sub/6MLH-W6rfyxoUgC0JKu6dZmTGYdx4yE5",
+    "https://raw.githubusercontent.com/barry-far/V2ray-config/main/Sub1.txt",
+    "https://raw.githubusercontent.com/mahdibland/V2RayAggregator/master/sub/sub_merge.txt",
+]
 
 
 def to_superscript(number):
@@ -25,14 +27,15 @@ def to_superscript(number):
     return "".join(superscript_map.get(char, char) for char in str(number))
 
 
-def fetch_configs(url):
+def fetch_configs_from_url(url):
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     }
     req = urllib.request.Request(url, headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=12) as response:
+        with urllib.request.urlopen(req, timeout=10) as response:
             content = response.read().decode("utf-8", errors="ignore").strip()
+            # تلاش برای دکود Base64
             try:
                 decoded = base64.b64decode(content).decode(
                     "utf-8", errors="ignore"
@@ -44,9 +47,11 @@ def fetch_configs(url):
                     return lines
             except Exception:
                 pass
-            return [
+
+            lines = [
                 line.strip() for line in content.splitlines() if line.strip()
             ]
+            return lines
     except Exception as e:
         print(f"Error fetching from {url}: {e}")
         return []
@@ -83,25 +88,31 @@ def rename_config(config, index):
 
 
 def main():
-    print("Fetching from primary source...")
-    raw_configs = fetch_configs(PRIMARY_SUB)
+    raw_configs = []
 
-    if not raw_configs:
-        print("Primary source failed. Fetching from backup source...")
-        raw_configs = fetch_configs(BACKUP_SUB)
+    # تست سورس‌ها به ترتیب
+    for src in SOURCES:
+        print(f"Trying source: {src}")
+        fetched = fetch_configs_from_url(src)
+        if fetched:
+            # فقط کانفیگ‌های معتبر پروکسی را جدا کن
+            valid = [
+                c
+                for c in fetched
+                if any(
+                    c.startswith(p)
+                    for p in ["vless://", "vmess://", "trojan://", "ss://"]
+                )
+            ]
+            if valid:
+                print(f"Success! Found {len(valid)} configs from {src}")
+                raw_configs.extend(valid)
+                if len(raw_configs) >= 30:
+                    break
 
-    valid_configs = [
-        cfg
-        for cfg in raw_configs
-        if any(
-            cfg.startswith(p)
-            for p in ["vless://", "vmess://", "trojan://", "ss://"]
-        )
-    ]
+    selected_configs = raw_configs[:30]
+    print(f"Total selected configs: {len(selected_configs)}")
 
-    print(f"Total valid configs found: {len(valid_configs)}")
-
-    selected_configs = valid_configs[:30]
     final_configs = [
         rename_config(cfg, idx)
         for idx, cfg in enumerate(selected_configs, start=1)
@@ -114,9 +125,9 @@ def main():
         )
         with open("sub.txt", "w", encoding="utf-8") as f:
             f.write(b64_output)
-        print("Updated sub.txt with 30 configs.")
+        print("sub.txt updated successfully!")
     else:
-        print("No configs available!")
+        print("CRITICAL: No configs found across all sources!")
 
 
 if __name__ == "__main__":
