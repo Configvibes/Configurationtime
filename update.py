@@ -31,7 +31,6 @@ def fetch_configs(url):
         with urllib.request.urlopen(req, timeout=15) as response:
             content = response.read().decode("utf-8", errors="ignore").strip()
 
-            # تلاش برای دکود Base64
             try:
                 decoded = base64.b64decode(content).decode(
                     "utf-8", errors="ignore"
@@ -44,7 +43,6 @@ def fetch_configs(url):
             except Exception:
                 pass
 
-            # اگر متن ساده بود
             return [
                 line.strip() for line in content.splitlines() if line.strip()
             ]
@@ -86,20 +84,29 @@ def rename_config(config, index):
 def main():
     print("Fetching ALL configs from source...")
     raw_configs = fetch_configs(SUB_URL)
-    print(f"Total fetched lines: {len(raw_configs)}")
+    print(f"Total raw fetched: {len(raw_configs)}")
 
-    # دریافت تمام کانفیگ‌های معتبر پروکسی بدون هیچ فیلتر پینگی
+    # جداسازی تمام پروکسی‌های معتبر (بدون هیچ محدودیت تعدادی)
     valid_configs = [
         cfg
         for cfg in raw_configs
         if any(
             cfg.startswith(p)
-            for p in ["vless://", "vmess://", "trojan://", "ss://", "hysteria2://", "hy2://", "tuic://"]
+            for p in [
+                "vless://",
+                "vmess://",
+                "trojan://",
+                "ss://",
+                "hysteria2://",
+                "hy2://",
+                "tuic://",
+            ]
         )
     ]
 
-    print(f"Total valid proxy configs found: {len(valid_configs)}")
+    print(f"Total valid proxy configs: {len(valid_configs)}")
 
+    # رینیم کردن تمام کانفیگ‌های دریافت شده از ۱ تا N
     final_configs = [
         rename_config(cfg, idx)
         for idx, cfg in enumerate(valid_configs, start=1)
@@ -112,9 +119,9 @@ def main():
         )
         with open("sub.txt", "w", encoding="utf-8") as f:
             f.write(b64_output)
-        print(f"Successfully saved {len(final_configs)} configs to sub.txt!")
+        print(f"Successfully updated sub.txt with ALL {len(final_configs)} configs!")
     else:
-        print("WARNING: Source returned 0 configs!")
+        print("WARNING: Source returned 0 valid configs!")
 
 
 if __name__ == "__main__":
