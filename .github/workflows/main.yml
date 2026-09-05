@@ -1,38 +1,29 @@
-name: Update Subscription
+name: Auto Update Subscription
 
 on:
   schedule:
-    - cron: '0 */4 * * *'
-  workflow_dispatch:
+    - cron: '0 */6 * * *' # اجرای خودکار هر ۶ ساعت یک‌بار
+  workflow_dispatch: # امکان اجرای دستی از تب Actions
 
 jobs:
-  update:
+  build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - name: Checkout Repository
+        uses: actions/checkout@v3
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v4
         with:
-          python-version: '3.11'
+          python-version: '3.x'
 
-      - name: Install sing-box
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y curl jq
-          SING_BOX_URL=$(curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest | jq -r '.assets[] | select(.name | contains("linux-amd64.tar.gz")) | .browser_download_url')
-          curl -sL "$SING_BOX_URL" -o sing-box.tar.gz
-          tar -xzf sing-box.tar.gz
-          sudo mv sing-box-*/sing-box /usr/local/bin/
-          sing-box version
+      - name: Run Processing Script
+        run: python process.py
 
-      - name: Run update script
-        run: python update.py
-
-      - name: Commit and push changes
+      - name: Commit and Push Changes
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add sub.txt
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update with real ping test" && git push)
+          git commit -m "Auto update sub configs" || exit 0
+          git push
