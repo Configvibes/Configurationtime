@@ -5,7 +5,6 @@ import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# آدرس لینک سورس جدید
 SUB_URL = "https://opti.testspeedpro.ir/vlessagg/sub/6MLH-W6rfyxoUgC0JKu6dZmTGYdx4yE5"
 
 
@@ -26,19 +25,27 @@ def to_superscript(number):
 
 
 def fetch_configs(url):
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        },
+    )
     try:
-        with urllib.request.urlopen(req, timeout=12) as response:
+        with urllib.request.urlopen(req, timeout=15) as response:
             content = response.read().decode("utf-8").strip()
             try:
                 decoded = base64.b64decode(content).decode("utf-8")
-                return [
+                lines = [
                     line.strip() for line in decoded.splitlines() if line.strip()
                 ]
+                if lines:
+                    return lines
             except Exception:
-                return [
-                    line.strip() for line in content.splitlines() if line.strip()
-                ]
+                pass
+            return [
+                line.strip() for line in content.splitlines() if line.strip()
+            ]
     except Exception as e:
         print(f"Error fetching sub: {e}")
         return []
@@ -87,16 +94,16 @@ def parse_host_port(config):
     return None, None
 
 
-def strict_ping(config):
-    """تست اتصال جهت حذف کامل کانفیگ‌های مرده"""
+def quick_check(config):
+    """تست سریع بدون فیلتر کردن زودهنگام کانفیگ‌های CDN"""
     host, port = parse_host_port(config)
     if not host or not port:
-        return None
+        return config
 
     try:
         clean_host = host.replace("[", "").replace("]", "")
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(1.5)
+        s.settimeout(2.0)
         s.connect((clean_host, int(port)))
         s.close()
         return config
@@ -106,7 +113,6 @@ def strict_ping(config):
 
 def rename_config(config, index):
     num_str = to_superscript(index)
-    # ثابت قرار دادن ایموجی دلفین برای تمام کانفیگ‌ها
     new_name = f"@Configvibes{num_str}🐬"
     encoded_name = urllib.parse.quote(new_name)
 
@@ -136,20 +142,29 @@ def rename_config(config, index):
 def main():
     print("Fetching raw configs...")
     raw_configs = fetch_configs(SUB_URL)
-    print(f"Total fetched: {len(raw_configs)}")
+    print(f"Total fetched from source: {len(raw_configs)}")
 
     working_configs = []
 
-    with ThreadPoolExecutor(max_workers=60) as executor:
-        futures = [executor.submit(strict_ping, cfg) for cfg in raw_configs]
-        for future in as_completed(futures):
-            res = future.result()
-            if res:
-                working_configs.append(res)
+    if raw_configs:
+        with ThreadPoolExecutor(max_workers=50) as executor:
+            futures = [executor.submit(quick_check, cfg) for cfg in raw_configs]
+            for future in as_completed(futures):
+                res = future.result()
+                if res and res not in working_configs:
+                    working_configs.append(res)
+                    if len(working_configs) >= 30:
+                        break
+
+        # پشتیبان: اگر پینگ گیت‌هاب بستگی داشت، از کانفیگ‌های خام سورس استفاده کن تا لینک خالی نماند
+        if len(working_configs) < 30:
+            for cfg in raw_configs:
+                if cfg not in working_configs:
+                    working_configs.append(cfg)
                 if len(working_configs) >= 30:
                     break
 
-    print(f"Active configs filtered: {len(working_configs)} items.")
+    print(f"Final selected configs: {len(working_configs)}")
 
     final_configs = []
     for idx, cfg in enumerate(working_configs[:30], start=1):
