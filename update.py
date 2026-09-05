@@ -1,32 +1,12 @@
 import base64
 import json
-import os
-import random
-import subprocess
-import tempfile
+import socket
 import urllib.parse
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
-EMOJIS = [
-    "🐬",
-    "🎀",
-    "✨",
-    "💫",
-    "⚡",
-    "🔥",
-    "🌟",
-    "💎",
-    "🔮",
-    "🚀",
-    "🦄",
-    "❄️",
-    "🍬",
-    "🍒",
-    "🍓",
-    "🎯",
-]
-SUB_URL = "https://raw.githubusercontent.com/barry-far/V2ray-config/main/Sub1.txt"
+# آدرس لینک سورس جدید
+SUB_URL = "https://opti.testspeedpro.ir/vlessagg/sub/6MLH-W6rfyxoUgC0JKu6dZmTGYdx4yE5"
 
 
 def to_superscript(number):
@@ -48,7 +28,7 @@ def to_superscript(number):
 def fetch_configs(url):
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
     try:
-        with urllib.request.urlopen(req, timeout=10) as response:
+        with urllib.request.urlopen(req, timeout=12) as response:
             content = response.read().decode("utf-8").strip()
             try:
                 decoded = base64.b64decode(content).decode("utf-8")
@@ -64,59 +44,70 @@ def fetch_configs(url):
         return []
 
 
-def test_real_ping_singbox(config, port):
-    """تست واقعی دیلی (Real Delay) با ارسال درخواست HTTP واقعی از طریق sing-box"""
+def parse_host_port(config):
     try:
-        # تبدیل کانفیگ به ساختار قابل فهم برای sing-box
-        singbox_config = {
-            "log": {"level": "panic"},
-            "inbounds": [{
-                "type": "mixed",
-                "tag": "mixed-in",
-                "listen": "127.0.0.1",
-                "listen_port": port,
-            }],
-            "outbounds": [{
-                "type": "urltest",
-                "tag": "url-test",
-                "outbounds": ["proxy"],
-                "url": "https://www.gstatic.com/generate_204",
-                "interval": "1m",
-                "tolerance": 50,
-            }],
-        }
+        if "://" not in config:
+            return None, None
 
-        # ساخت فایل موقت
-        with tempfile.NamedTemporaryFile("w", delete=False, suffix=".json") as f:
-            json.dump(singbox_config, f)
-            config_file = f.name
+        proto, rest = config.split("://", 1)
 
-        # اجرای تست urltest اختصاصی sing-box
-        cmd = [
-            "sing-box",
-            "urltest",
-            "-c",
-            config_file,
-            "--url",
-            "https://www.gstatic.com/generate_204",
-        ]
-        proc = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=3.5
-        )
+        if proto in ["vless", "trojan"]:
+            main_part = rest.split("#")[0].split("?")[0]
+            if "@" in main_part:
+                host_port = main_part.split("@")[1]
+            else:
+                host_port = main_part
 
-        os.remove(config_file)
+            if "]" in host_port:
+                host = host_port.split("]")[0] + "]"
+                port = int(host_port.split("]:")[1].split("/")[0])
+            else:
+                host, port = host_port.split(":")
+                port = int(port.split("/")[0])
+            return host, port
 
-        if proc.returncode == 0:
-            return config
+        elif proto == "ss":
+            main_part = rest.split("#")[0].split("?")[0].split("/")[0]
+            if "@" in main_part:
+                host_port = main_part.split("@")[1]
+                host, port = host_port.split(":")
+                return host, int(port)
+
+        elif proto == "vmess":
+            b64_str = rest.split("#")[0]
+            missing_padding = len(b64_str) % 4
+            if missing_padding:
+                b64_str += "=" * (4 - missing_padding)
+            decoded = base64.b64decode(b64_str).decode("utf-8")
+            data = json.loads(decoded)
+            return data.get("add"), int(data.get("port", 443))
+
     except Exception:
         pass
-    return None
+    return None, None
+
+
+def strict_ping(config):
+    """تست اتصال جهت حذف کامل کانفیگ‌های مرده"""
+    host, port = parse_host_port(config)
+    if not host or not port:
+        return None
+
+    try:
+        clean_host = host.replace("[", "").replace("]", "")
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(1.5)
+        s.connect((clean_host, int(port)))
+        s.close()
+        return config
+    except Exception:
+        return None
 
 
 def rename_config(config, index):
     num_str = to_superscript(index)
-    emoji = random.choice(EMOJIS)
-    new_name = f"@Configvibes{num_str}{emoji}"
+    # ثابت قرار دادن ایموجی دلفین برای تمام کانفیگ‌ها
+    new_name = f"@Configvibes{num_str}🐬"
     encoded_name = urllib.parse.quote(new_name)
 
     if config.startswith("vmess://"):
@@ -147,32 +138,18 @@ def main():
     raw_configs = fetch_configs(SUB_URL)
     print(f"Total fetched: {len(raw_configs)}")
 
-    # محدود کردن ورودی برای افزایش سرعت تست
-    sample_configs = raw_configs[:150]
     working_configs = []
 
-    print("Running Real Ping tests (HTTP Handshake)...")
-    with ThreadPoolExecutor(max_workers=20) as executor:
-        futures = [
-            executor.submit(test_real_ping_singbox, cfg, 20000 + idx)
-            for idx, cfg in enumerate(sample_configs)
-        ]
-        for future in futures:
+    with ThreadPoolExecutor(max_workers=60) as executor:
+        futures = [executor.submit(strict_ping, cfg) for cfg in raw_configs]
+        for future in as_completed(futures):
             res = future.result()
             if res:
                 working_configs.append(res)
                 if len(working_configs) >= 30:
                     break
 
-    print(f"Found {len(working_configs)} working configs with real ping.")
-
-    # پشتیبان: اگر تست واقعی کمتر از ۳۰ تا داد، باقی‌مانده را از سورس اصلی می‌آورد
-    if len(working_configs) < 30:
-        for cfg in raw_configs:
-            if cfg not in working_configs:
-                working_configs.append(cfg)
-            if len(working_configs) >= 30:
-                break
+    print(f"Active configs filtered: {len(working_configs)} items.")
 
     final_configs = []
     for idx, cfg in enumerate(working_configs[:30], start=1):
