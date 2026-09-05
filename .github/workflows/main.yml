@@ -2,14 +2,14 @@ name: Update Subscription
 
 on:
   schedule:
-    - cron: '*/30 * * * *'
+    - cron: '0 */6 * * *'
   workflow_dispatch:
 
 jobs:
   update:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Set up Python
@@ -17,15 +17,22 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Install sing-box
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y curl jq
+          SING_BOX_URL=$(curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest | jq -r '.assets[] | select(.name | contains("linux-amd64.tar.gz")) | .browser_download_url')
+          curl -sL "$SING_BOX_URL" -o sing-box.tar.gz
+          tar -xzf sing-box.tar.gz
+          sudo mv sing-box-*/sing-box /usr/local/bin/
+          sing-box version
+
       - name: Run update script
         run: python update.py
 
-      - name: Commit & Push
+      - name: Commit and push changes
         run: |
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add sub.txt
-          git diff --quiet && git diff --staged --quiet || (
-            git commit -m "Update @Configvibes sub $(date -u +'%Y-%m-%d %H:%M')" &&
-            git push
-          )
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update subscription with real ping" && git push)
